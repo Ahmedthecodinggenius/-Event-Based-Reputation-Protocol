@@ -5,6 +5,10 @@
 (define-constant ERR-SELF-RATING (err u104))
 (define-constant ERR-BADGE-NOT-FOUND (err u105))
 (define-constant ERR-BADGE-ALREADY-AWARDED (err u106))
+(define-constant ERR-ALREADY-REGISTERED (err u108))
+(define-constant ERR-NOT-REGISTERED (err u109))
+(define-constant ERR-REGISTRATION-CLOSED (err u110))
+(define-constant ERR-EVENT-FULL (err u111))
 
 (define-data-var next-event-id uint u1)
 (define-data-var next-badge-id uint u1)
@@ -18,7 +22,9 @@
         date: uint,
         status: (string-ascii 20),
         rating-sum: uint,
-        rating-count: uint
+        rating-count: uint,
+        max-participants: uint,
+        registration-count: uint
     }
 )
 
@@ -52,7 +58,17 @@
     { awarded-by: principal, timestamp: uint }
 )
 
-(define-public (create-event (title (string-ascii 50)) (description (string-ascii 200)) (date uint))
+(define-map event-registrations
+    { event-id: uint, user: principal }
+    { registered-at: uint }
+)
+
+(define-map user-event-registrations
+    { user: principal, event-id: uint }
+    { registration-status: bool }
+)
+
+(define-public (create-event (title (string-ascii 50)) (description (string-ascii 200)) (date uint) (max-participants uint))
     (let ((event-id (var-get next-event-id)))
         (map-set events
             { event-id: event-id }
@@ -63,7 +79,9 @@
                 date: date,
                 status: "active",
                 rating-sum: u0,
-                rating-count: u0
+                rating-count: u0,
+                max-participants: max-participants,
+                registration-count: u0
             }
         )
         (var-set next-event-id (+ event-id u1))
@@ -204,4 +222,81 @@
 
 (define-private (has-badge-for-user (badge-id uint))
     (is-some (map-get? user-badges {user: tx-sender, badge-id: badge-id}))
+)
+
+(define-public (register-for-event (event-id uint))
+    (let (
+        (event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND))
+        (current-registrations (get registration-count event))
+        (max-participants (get max-participants event))
+    )
+        (asserts! (is-eq (get status event) "active") ERR-REGISTRATION-CLOSED)
+        (asserts! (< current-registrations max-participants) ERR-EVENT-FULL)
+        (asserts! (is-none (map-get? user-event-registrations {user: tx-sender, event-id: event-id})) ERR-ALREADY-REGISTERED)
+        
+        (map-set event-registrations
+            {event-id: event-id, user: tx-sender}
+            {registered-at: burn-block-height}
+        )
+        
+        (map-set user-event-registrations
+            {user: tx-sender, event-id: event-id}
+            {registration-status: true}
+        )
+        
+        (map-set events
+            {event-id: event-id}
+            (merge event {registration-count: (+ current-registrations u1)})
+        )
+        (ok true)
+    )
+)
+
+(define-public (unregister-from-event (event-id uint))
+    (let (
+        (event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND))
+        (current-registrations (get registration-count event))
+    )
+        (asserts! (is-eq (get status event) "active") ERR-REGISTRATION-CLOSED)
+        (asserts! (is-some (map-get? user-event-registrations {user: tx-sender, event-id: event-id})) ERR-NOT-REGISTERED)
+        
+        (map-delete event-registrations {event-id: event-id, user: tx-sender})
+        (map-delete user-event-registrations {user: tx-sender, event-id: event-id})
+        
+        (map-set events
+            {event-id: event-id}
+            (merge event {registration-count: (- current-registrations u1)})
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (get-event-registrations (event-id uint))
+    (let (
+        (event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND))
+    )
+        (ok {
+            registration-count: (get registration-count event),
+            max-participants: (get max-participants event),
+            slots-available: (- (get max-participants event) (get registration-count event))
+        })
+    )
+)
+
+(define-read-only (is-user-registered (user principal) (event-id uint))
+    (is-some (map-get? user-event-registrations {user: user, event-id: event-id}))
+)
+
+(define-read-only (get-user-registrations (user principal))
+    (len (filter is-registered-for-event (list
+        u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20
+        u21 u22 u23 u24 u25 u26 u27 u28 u29 u30 u31 u32 u33 u34 u35 u36 u37 u38 u39 u40
+        u41 u42 u43 u44 u45 u46 u47 u48 u49 u50 u51 u52 u53 u54 u55 u56 u57 u58 u59 u60
+        u61 u62 u63 u64 u65 u66 u67 u68 u69 u70 u71 u72 u73 u74 u75 u76 u77 u78 u79 u80
+        u81 u82 u83 u84 u85 u86 u87 u88 u89 u90 u91 u92 u93 u94 u95 u96 u97 u98 u99 u100
+    )))
+)
+
+(define-private (is-registered-for-event (event-id uint))
+    (is-some (map-get? user-event-registrations {user: tx-sender, event-id: event-id}))
 )
