@@ -1,0 +1,9 @@
+- [x] Add ERR-CATEGORY-NOT-FOUND constant
+- [x] Add next-category-id data-var
+- [x] Add categories map
+- [x] Modify events map to include category-id
+- [x] Add create-category function
+- [x] Modify create-event function to include category-id parameter and update category
+- [x] Add get-category read-only function
+- [x] Add get-events-by-category read-only function
+- [x] Run clarinet check to ensure no errors
