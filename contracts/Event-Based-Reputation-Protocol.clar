@@ -9,11 +9,17 @@
 (define-constant ERR-NOT-REGISTERED (err u109))
 (define-constant ERR-REGISTRATION-CLOSED (err u110))
 (define-constant ERR-EVENT-FULL (err u111))
+(define-constant ERR-EVENT-CANCELLED (err u112))
+(define-constant ERR-EVENT-NOT-ACTIVE (err u113))
+(define-constant ERR-EVENT-NOT-COMPLETED (err u114))
+(define-constant ERR-LIST-FULL (err u115))
+(define-constant ERR-CATEGORY-NOT-FOUND (err u116))
 
 (define-data-var next-event-id uint u1)
 (define-data-var next-badge-id uint u1)
+(define-data-var next-category-id uint u1)
 
-(define-map events 
+(define-map events
     { event-id: uint }
     {
         organizer: principal,
@@ -24,7 +30,8 @@
         rating-sum: uint,
         rating-count: uint,
         max-participants: uint,
-        registration-count: uint
+        registration-count: uint,
+        category-id: uint
     }
 )
 
@@ -68,8 +75,16 @@
     { registration-status: bool }
 )
 
-(define-public (create-event (title (string-ascii 50)) (description (string-ascii 200)) (date uint) (max-participants uint))
-    (let ((event-id (var-get next-event-id)))
+(define-map categories
+    { category-id: uint }
+    {
+        name: (string-ascii 30),
+        events: (list 100 uint)
+    }
+)
+
+(define-public (create-event (title (string-ascii 50)) (description (string-ascii 200)) (date uint) (max-participants uint) (category-id uint))
+    (let ((event-id (var-get next-event-id)) (category (unwrap! (map-get? categories {category-id: category-id}) ERR-CATEGORY-NOT-FOUND)))
         (map-set events
             { event-id: event-id }
             {
@@ -81,17 +96,34 @@
                 rating-sum: u0,
                 rating-count: u0,
                 max-participants: max-participants,
-                registration-count: u0
+                registration-count: u0,
+                category-id: category-id
             }
         )
         (var-set next-event-id (+ event-id u1))
+        (map-set categories {category-id: category-id} (merge category {events: (unwrap! (as-max-len? (append (get events category) event-id) u100) ERR-LIST-FULL)}))
         (ok event-id)
     )
 )
 
+(define-public (create-category (name (string-ascii 30)))
+    (let ((category-id (var-get next-category-id)))
+        (map-set categories
+            { category-id: category-id }
+            {
+                name: name,
+                events: (list)
+            }
+        )
+        (var-set next-category-id (+ category-id u1))
+        (ok category-id)
+    )
+)
+
 (define-public (complete-event (event-id uint))
-    (let ((event (unwrap! (map-get? events {event-id: event-id}) (err u100))))
-        (asserts! (is-eq tx-sender (get organizer event)) (err u101))
+    (let ((event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get organizer event)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status event) "active") ERR-EVENT-NOT-ACTIVE)
         (map-set events
             { event-id: event-id }
             (merge event { status: "completed" })
@@ -100,15 +132,24 @@
     )
 )
 
+(define-public (cancel-event (event-id uint))
+    (let ((event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get organizer event)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status event) "active") ERR-EVENT-NOT-ACTIVE)
+        (map-set events {event-id: event-id} (merge event {status: "cancelled"}))
+        (ok true)
+    )
+)
+
 (define-public (rate-event (event-id uint) (rating uint))
     (let (
-        (event (unwrap! (map-get? events {event-id: event-id}) (err u404)))
+        (event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND))
         (organizer (get organizer event))
     )
-        (asserts! (not (is-eq tx-sender organizer)) (err u401))
-        (asserts! (and (>= rating u1) (<= rating u5)) (err u400))
-        (asserts! (is-eq (get status event) "completed") (err u403))
-        (asserts! (is-none (map-get? user-ratings {event-id: event-id, rater: tx-sender})) (err u409))
+        (asserts! (not (is-eq tx-sender organizer)) ERR-SELF-RATING)
+        (asserts! (and (>= rating u1) (<= rating u5)) ERR-INVALID-RATING)
+        (asserts! (is-eq (get status event) "completed") ERR-EVENT-NOT-COMPLETED)
+        (asserts! (is-none (map-get? user-ratings {event-id: event-id, rater: tx-sender})) ERR-ALREADY-RATED)
         
         (map-set user-ratings {event-id: event-id, rater: tx-sender} {rating: rating})
         
@@ -146,6 +187,16 @@
 
 (define-read-only (get-event (event-id uint))
     (map-get? events {event-id: event-id})
+)
+
+(define-read-only (get-category (category-id uint))
+    (map-get? categories {category-id: category-id})
+)
+
+(define-read-only (get-events-by-category (category-id uint))
+    (let ((category (unwrap! (map-get? categories {category-id: category-id}) ERR-CATEGORY-NOT-FOUND)))
+        (ok (get events category))
+    )
 )
 
 (define-read-only (get-user-reputation (user principal))
@@ -200,7 +251,7 @@
         
         (map-set badges
             {badge-id: badge-id}
-            (merge badge {awarded-to: (unwrap! (as-max-len? (append current-awarded recipient) u100) (err u107))})
+            (merge badge {awarded-to: (unwrap! (as-max-len? (append current-awarded recipient) u100) ERR-LIST-FULL)})
         )
         (ok true)
     )
@@ -298,5 +349,4 @@
 )
 
 (define-private (is-registered-for-event (event-id uint))
-    (is-some (map-get? user-event-registrations {user: tx-sender, event-id: event-id}))
-)
+    (is-some (map-get? user-event-registrations {user: tx-sender, event-id: event-id})))
