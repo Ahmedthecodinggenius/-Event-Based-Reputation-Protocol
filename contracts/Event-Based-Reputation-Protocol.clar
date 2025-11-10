@@ -310,14 +310,23 @@
     )
         (asserts! (is-eq (get status event) "active") ERR-REGISTRATION-CLOSED)
         (asserts! (is-some (map-get? user-event-registrations {user: tx-sender, event-id: event-id})) ERR-NOT-REGISTERED)
-        
+
         (map-delete event-registrations {event-id: event-id, user: tx-sender})
         (map-delete user-event-registrations {user: tx-sender, event-id: event-id})
-        
+
         (map-set events
             {event-id: event-id}
             (merge event {registration-count: (- current-registrations u1)})
         )
+        (ok true)
+    )
+)
+
+(define-public (update-event-details (event-id uint) (new-title (string-ascii 50)) (new-description (string-ascii 200)) (new-date uint))
+    (let ((event (unwrap! (map-get? events {event-id: event-id}) ERR-EVENT-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get organizer event)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status event) "active") ERR-EVENT-NOT-ACTIVE)
+        (map-set events {event-id: event-id} (merge event {title: new-title, description: new-description, date: new-date}))
         (ok true)
     )
 )
